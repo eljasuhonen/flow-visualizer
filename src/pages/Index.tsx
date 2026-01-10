@@ -7,10 +7,17 @@ import { BayesianPanel } from '@/components/carf/BayesianPanel';
 import { CausalAnalysisCard } from '@/components/carf/CausalAnalysisCard';
 import { GuardianPanel } from '@/components/carf/GuardianPanel';
 import { ExecutionTrace } from '@/components/carf/ExecutionTrace';
+import { DeveloperDebugView } from '@/components/carf/DeveloperDebugView';
+import { ExecutiveSummaryView } from '@/components/carf/ExecutiveSummaryView';
+import { SimulationControls } from '@/components/carf/SimulationControls';
 import { getScenario, Scenario } from '@/data/mockData';
+import { runAnalysis, SimulationParams, defaultSimulationParams } from '@/services/carfService';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import { Loader2, Sparkles } from 'lucide-react';
+import { Loader2, Sparkles, User, Code, BarChart3 } from 'lucide-react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+
+type ViewMode = 'end-user' | 'developer' | 'executive';
 
 export default function Index() {
   const [selectedScenario, setSelectedScenario] = useState('s3ae');
@@ -18,6 +25,9 @@ export default function Index() {
   const [currentStep, setCurrentStep] = useState(0);
   const [scenario, setScenario] = useState<Scenario | null>(null);
   const [hasStarted, setHasStarted] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>('end-user');
+  const [simulationParams, setSimulationParams] = useState<SimulationParams>(defaultSimulationParams);
+  const [executionTimeMs, setExecutionTimeMs] = useState(0);
 
   const sessionId = 'sess_demo_' + Math.random().toString(36).slice(2, 10);
 
@@ -33,39 +43,29 @@ export default function Index() {
     setHasStarted(true);
     setCurrentStep(0);
     
-    const data = getScenario(selectedScenario);
+    const response = await runAnalysis(
+      { query, scenarioId: selectedScenario, simulationParams },
+      (progress) => setCurrentStep(progress.step)
+    );
     
-    // Simulate step-by-step reveal with realistic timing
-    const stepDelays = [400, 600, 1200, 800, 500];
-    
-    for (let i = 1; i <= 5; i++) {
-      await new Promise(r => setTimeout(r, stepDelays[i - 1]));
-      setCurrentStep(i);
-    }
-    
-    setScenario(data);
+    setScenario(response.scenario);
+    setExecutionTimeMs(response.executionTimeMs);
     setIsProcessing(false);
     toast.success('Analysis complete', {
-      description: `Processed via ${data.cynefin.solver}`,
+      description: `Processed via ${response.scenario.cynefin.solver}`,
     });
-  }, [selectedScenario]);
+  }, [selectedScenario, simulationParams]);
 
   const handleApprove = () => {
-    toast.success('Action approved', {
-      description: 'Queued for execution with receipt ID generated',
-    });
+    toast.success('Action approved', { description: 'Queued for execution with receipt ID generated' });
   };
 
   const handleReject = (reason: string) => {
-    toast.error('Action rejected', {
-      description: reason,
-    });
+    toast.error('Action rejected', { description: reason });
   };
 
   const handleClarification = () => {
-    toast.info('Clarification requested', {
-      description: 'System will provide additional context',
-    });
+    toast.info('Clarification requested', { description: 'System will provide additional context' });
   };
 
   const currentScenarioData = getScenario(selectedScenario);
@@ -79,160 +79,105 @@ export default function Index() {
       />
 
       <main className="container mx-auto p-4 lg:p-6">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Left Panel - Query & Classification */}
-          <div className="lg:col-span-3 space-y-4">
-            <div className="space-y-2">
-              <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-                Query Input
-              </h2>
-              <QueryInput
-                onSubmit={simulateAnalysis}
-                suggestedQueries={currentScenarioData.suggestedQueries}
-                isProcessing={isProcessing}
-              />
+        {/* View Mode Tabs */}
+        <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as ViewMode)} className="mb-6">
+          <TabsList className="grid w-full max-w-md grid-cols-3">
+            <TabsTrigger value="end-user" className="text-xs">
+              <User className="h-3 w-3 mr-1" />
+              End-User
+            </TabsTrigger>
+            <TabsTrigger value="developer" className="text-xs">
+              <Code className="h-3 w-3 mr-1" />
+              Developer
+            </TabsTrigger>
+            <TabsTrigger value="executive" className="text-xs">
+              <BarChart3 className="h-3 w-3 mr-1" />
+              Executive
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+
+        {/* End-User View */}
+        {viewMode === 'end-user' && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            {/* Left Panel */}
+            <div className="lg:col-span-3 space-y-4">
+              <QueryInput onSubmit={simulateAnalysis} suggestedQueries={currentScenarioData.suggestedQueries} isProcessing={isProcessing} />
+              <SimulationControls params={simulationParams} onChange={setSimulationParams} onReset={() => setSimulationParams(defaultSimulationParams)} disabled={isProcessing} />
+              {isProcessing && currentStep < 1 && (
+                <div className="flex items-center justify-center gap-3 p-6 bg-card border border-border/50 rounded-lg animate-pulse">
+                  <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                  <span className="text-sm text-muted-foreground">Initializing...</span>
+                </div>
+              )}
+              <CynefinRouter classification={scenario?.cynefin || currentScenarioData.cynefin} isVisible={currentStep >= 1} />
+              <BayesianPanel beliefStates={scenario?.beliefStates || currentScenarioData.beliefStates} isVisible={currentStep >= 3} />
             </div>
 
-            {/* Processing Indicator */}
-            {isProcessing && currentStep < 1 && (
-              <div className="flex items-center justify-center gap-3 p-6 bg-card border border-border/50 rounded-lg animate-pulse">
-                <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                <span className="text-sm text-muted-foreground">Initializing analysis...</span>
-              </div>
-            )}
-
-            <CynefinRouter
-              classification={scenario?.cynefin || currentScenarioData.cynefin}
-              isVisible={currentStep >= 1}
-            />
-
-            <BayesianPanel
-              beliefStates={scenario?.beliefStates || currentScenarioData.beliefStates}
-              isVisible={currentStep >= 3}
-            />
-          </div>
-
-          {/* Center Panel - DAG & Analysis */}
-          <div className="lg:col-span-6 space-y-4">
-            {!hasStarted && (
-              <div className="flex flex-col items-center justify-center min-h-[400px] border border-dashed border-border/50 rounded-lg bg-muted/20">
-                <div className="text-center space-y-4 p-8">
-                  <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 mb-2">
-                    <Sparkles className="h-8 w-8 text-primary" />
-                  </div>
-                  <h3 className="text-xl font-semibold">Ready for Analysis</h3>
-                  <p className="text-sm text-muted-foreground max-w-md">
-                    Enter a query in the left panel or select a suggested query to begin 
-                    causal analysis with the CARF Neuro-Symbolic system.
-                  </p>
-                  <div className="flex flex-wrap justify-center gap-2 pt-2">
-                    <span className="px-2 py-1 bg-cynefin-clear/20 text-cynefin-clear text-xs rounded">Clear</span>
-                    <span className="px-2 py-1 bg-cynefin-complicated/20 text-cynefin-complicated text-xs rounded">Complicated</span>
-                    <span className="px-2 py-1 bg-cynefin-complex/20 text-cynefin-complex text-xs rounded">Complex</span>
-                    <span className="px-2 py-1 bg-cynefin-chaotic/20 text-cynefin-chaotic text-xs rounded">Chaotic</span>
+            {/* Center Panel */}
+            <div className="lg:col-span-6 space-y-4">
+              {!hasStarted && (
+                <div className="flex flex-col items-center justify-center min-h-[400px] border border-dashed border-border/50 rounded-lg bg-muted/20">
+                  <div className="text-center space-y-4 p-8">
+                    <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 mb-2">
+                      <Sparkles className="h-8 w-8 text-primary" />
+                    </div>
+                    <h3 className="text-xl font-semibold">Ready for Analysis</h3>
+                    <p className="text-sm text-muted-foreground max-w-md">Enter a query to begin causal analysis with the CARF system.</p>
                   </div>
                 </div>
-              </div>
-            )}
-
-            {hasStarted && currentStep < 2 && isProcessing && (
-              <div className="flex items-center justify-center min-h-[300px] border border-border/50 rounded-lg bg-card">
-                <div className="text-center space-y-3">
-                  <Loader2 className="h-8 w-8 animate-spin text-primary mx-auto" />
-                  <p className="text-sm text-muted-foreground">Building causal graph...</p>
+              )}
+              {hasStarted && currentStep < 2 && isProcessing && (
+                <div className="flex items-center justify-center min-h-[300px] border border-border/50 rounded-lg bg-card">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
                 </div>
-              </div>
-            )}
+              )}
+              <CausalDAG dag={scenario?.dag || currentScenarioData.dag} isVisible={currentStep >= 2} />
+              <CausalAnalysisCard result={scenario?.causalResult || currentScenarioData.causalResult} isVisible={currentStep >= 3} />
+              <GuardianPanel decision={scenario?.guardian || currentScenarioData.guardian} isVisible={currentStep >= 4} onApprove={handleApprove} onReject={handleReject} onRequestClarification={handleClarification} />
+            </div>
 
-            <CausalDAG
-              dag={scenario?.dag || currentScenarioData.dag}
-              isVisible={currentStep >= 2}
-            />
-
-            <CausalAnalysisCard
-              result={scenario?.causalResult || currentScenarioData.causalResult}
-              isVisible={currentStep >= 3}
-            />
-
-            <GuardianPanel
-              decision={scenario?.guardian || currentScenarioData.guardian}
-              isVisible={currentStep >= 4}
-              onApprove={handleApprove}
-              onReject={handleReject}
-              onRequestClarification={handleClarification}
-            />
-          </div>
-
-          {/* Right Panel - Trace */}
-          <div className="lg:col-span-3 space-y-4">
-            {hasStarted && currentStep < 5 && isProcessing && (
-              <div className="p-4 border border-border/50 rounded-lg bg-card">
-                <div className="space-y-3">
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
-                    <span className="text-xs text-muted-foreground">Processing...</span>
-                  </div>
-                  {/* Step indicators */}
-                  <div className="space-y-2">
-                    {['QueryParser', 'CynefinRouter', 'CausalAnalyst', 'BayesianUpdater', 'Guardian'].map((step, i) => (
-                      <div
-                        key={step}
-                        className={cn(
-                          "flex items-center gap-2 text-xs p-2 rounded",
-                          currentStep > i ? "bg-status-success/10 text-status-success" :
-                          currentStep === i ? "bg-primary/10 text-primary" : "text-muted-foreground"
-                        )}
-                      >
-                        {currentStep > i ? (
-                          <span className="w-4 h-4 rounded-full bg-status-success text-white flex items-center justify-center text-[10px]">✓</span>
-                        ) : currentStep === i ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <span className="w-4 h-4 rounded-full border border-muted-foreground/30" />
-                        )}
-                        {step}
-                      </div>
-                    ))}
-                  </div>
+            {/* Right Panel */}
+            <div className="lg:col-span-3 space-y-4">
+              {hasStarted && currentStep < 5 && isProcessing && (
+                <div className="p-4 border border-border/50 rounded-lg bg-card space-y-2">
+                  {['QueryParser', 'CynefinRouter', 'CausalAnalyst', 'BayesianUpdater', 'Guardian'].map((step, i) => (
+                    <div key={step} className={cn("flex items-center gap-2 text-xs p-2 rounded", currentStep > i ? "bg-status-success/10 text-status-success" : currentStep === i ? "bg-primary/10 text-primary" : "text-muted-foreground")}>
+                      {currentStep > i ? <span className="w-4 h-4 rounded-full bg-status-success text-white flex items-center justify-center text-[10px]">✓</span> : currentStep === i ? <Loader2 className="h-4 w-4 animate-spin" /> : <span className="w-4 h-4 rounded-full border border-muted-foreground/30" />}
+                      {step}
+                    </div>
+                  ))}
                 </div>
-              </div>
-            )}
-
-            <ExecutionTrace
-              trace={scenario?.trace || currentScenarioData.trace}
-              isVisible={currentStep >= 5}
-            />
-            
-            {/* Help Card when not started */}
-            {!hasStarted && (
-              <div className="p-4 border border-border/50 rounded-lg bg-card space-y-3">
-                <h3 className="text-sm font-semibold">How it works</h3>
-                <ol className="text-xs text-muted-foreground space-y-2">
-                  <li className="flex gap-2">
-                    <span className="font-bold text-primary">1.</span>
-                    <span>Enter your query or select a suggestion</span>
-                  </li>
-                  <li className="flex gap-2">
-                    <span className="font-bold text-primary">2.</span>
-                    <span>Cynefin Router classifies the problem domain</span>
-                  </li>
-                  <li className="flex gap-2">
-                    <span className="font-bold text-primary">3.</span>
-                    <span>Causal DAG is constructed and analyzed</span>
-                  </li>
-                  <li className="flex gap-2">
-                    <span className="font-bold text-primary">4.</span>
-                    <span>Bayesian beliefs are updated with uncertainty</span>
-                  </li>
-                  <li className="flex gap-2">
-                    <span className="font-bold text-primary">5.</span>
-                    <span>Guardian checks policies for your approval</span>
-                  </li>
-                </ol>
-              </div>
-            )}
+              )}
+              <ExecutionTrace trace={scenario?.trace || currentScenarioData.trace} isVisible={currentStep >= 5} />
+            </div>
           </div>
-        </div>
+        )}
+
+        {/* Developer View */}
+        {viewMode === 'developer' && (
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+            <div className="space-y-4">
+              <QueryInput onSubmit={simulateAnalysis} suggestedQueries={currentScenarioData.suggestedQueries} isProcessing={isProcessing} />
+              <SimulationControls params={simulationParams} onChange={setSimulationParams} onReset={() => setSimulationParams(defaultSimulationParams)} disabled={isProcessing} />
+            </div>
+            <div className="lg:col-span-3">
+              <DeveloperDebugView scenario={scenario} isVisible={hasStarted && currentStep >= 5} executionTimeMs={executionTimeMs} />
+            </div>
+          </div>
+        )}
+
+        {/* Executive View */}
+        {viewMode === 'executive' && (
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+            <div className="space-y-4">
+              <QueryInput onSubmit={simulateAnalysis} suggestedQueries={currentScenarioData.suggestedQueries} isProcessing={isProcessing} />
+            </div>
+            <div className="lg:col-span-3">
+              <ExecutiveSummaryView scenario={scenario} isVisible={hasStarted && currentStep >= 5} onApprove={handleApprove} onReject={handleReject} />
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );
